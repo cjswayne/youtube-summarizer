@@ -46,11 +46,9 @@ def send_digest(summaries: list[dict], config: dict, smtp_password: str) -> None
     to_addr = email_cfg["to"]
     prefix = email_cfg.get("subject_prefix", "[VideoDigest]")
     count = len(summaries)
-    today = datetime.now().strftime("%b %-d") if hasattr(datetime, 'now') else datetime.now().strftime("%b %d")
-
     now = datetime.now()
-    today = f"{now.strftime('%b')} {now.day}"
-    subject = f"{prefix} {count} new video{'s' if count != 1 else ''} — {today}"
+    today = f"{now.strftime('%b')} {now.day}"  # e.g. "Apr 5"
+    subject = f"{prefix} {count} new video{'s' if count != 1 else ''} \u2014 {today}"
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject

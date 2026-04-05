@@ -17,6 +17,6 @@ email:
   subject_prefix: "[VideoDigest]"
 
 settings:
-  lookback_days: 2
+  lookback_days: 30
   max_videos_per_channel: 5
   transcript_language: "en"
