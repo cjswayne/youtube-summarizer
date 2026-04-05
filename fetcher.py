@@ -3,6 +3,8 @@ import json
 import math
 import os
 import tempfile
+import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
 COOKIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
@@ -15,62 +17,52 @@ def _cookies_args() -> list[str]:
     return []
 
 
-def get_recent_videos(handle: str, lookback_days: int, max_count: int) -> list[dict]:
+def get_recent_videos(channel_id: str, handle: str, lookback_days: int, max_count: int) -> list[dict]:
     """
-    Fetch recent videos from a YouTube channel using yt-dlp.
+    Fetch recent videos from a YouTube channel via the RSS feed.
+    No yt-dlp needed — no bot detection, no format issues.
     Returns list of dicts with keys: id, title, description, url, published_at.
     """
-    url = f"https://www.youtube.com/{handle}/videos"
-    cmd = [
-        "yt-dlp",
-        "--playlist-end", str(max_count),
-        "--dump-json",
-        "--no-check-formats",
-        "--no-warnings",
-        "--quiet",
-        *_cookies_args(),
-        url,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    if result.returncode != 0:
-        print(f"  yt-dlp error for {handle}: {result.stderr.strip()}")
+    rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+    try:
+        with urllib.request.urlopen(rss_url, timeout=30) as resp:
+            xml_data = resp.read()
+    except Exception as e:
+        print(f"  RSS fetch error for {handle}: {e}")
         return []
 
+    NS = {
+        "atom": "http://www.w3.org/2005/Atom",
+        "yt":   "http://www.youtube.com/xml/schemas/2015",
+        "media":"http://search.yahoo.com/mrss/",
+    }
+    root = ET.fromstring(xml_data)
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     videos = []
 
-    for line in result.stdout.strip().splitlines():
-        if not line.strip():
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError as e:
-            print(f"  Failed to parse yt-dlp JSON line: {e}")
-            continue
+    for entry in root.findall("atom:entry", NS)[:max_count]:
+        video_id  = entry.findtext("yt:videoId", namespaces=NS) or ""
+        title     = entry.findtext("atom:title", namespaces=NS) or ""
+        published_str = entry.findtext("atom:published", namespaces=NS) or ""
+        media_grp = entry.find("media:group", NS)
+        description = ""
+        if media_grp is not None:
+            description = media_grp.findtext("media:description", namespaces=NS) or ""
 
-        upload_date = data.get("upload_date", "")
-        print(f"  Found: {data.get('title', '?')!r} uploaded {upload_date}")
+        if not published_str:
+            continue
+        published = datetime.fromisoformat(published_str)
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
 
-        if not upload_date or len(upload_date) != 8:
-            print(f"  Skipping (no upload_date)")
-            continue
-        try:
-            published = datetime(
-                int(upload_date[:4]),
-                int(upload_date[4:6]),
-                int(upload_date[6:8]),
-                tzinfo=timezone.utc,
-            )
-        except ValueError:
-            print(f"  Skipping (bad upload_date format: {upload_date!r})")
-            continue
+        print(f"  Found: {title!r} published {published.date()}")
 
         if published >= cutoff:
             videos.append({
-                "id": data["id"],
-                "title": data.get("title", ""),
-                "description": data.get("description", ""),
-                "url": f"https://www.youtube.com/watch?v={data['id']}",
+                "id": video_id,
+                "title": title,
+                "description": description,
+                "url": f"https://www.youtube.com/watch?v={video_id}",
                 "published_at": published.isoformat(),
             })
         else:

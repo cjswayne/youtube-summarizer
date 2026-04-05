@@ -1,11 +1,13 @@
 channels:
   - handle: "@LiquidWeekly"
+    channel_id: "UCf-fJjjCIpXbaUJRmevVLsg"
     name: "Liquid Weekly"
     instructions: |
       Focus on key updates and announcements.
       Ignore small talk, sponsor reads, and intro/outro.
 
   - handle: "@jadepuma"
+    channel_id: "UCyixBMjqQWClx4rGlewAp4A"
     name: "Jade Puma"
     instructions: |
       Summarize all key points covered.

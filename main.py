@@ -41,8 +41,13 @@ def main():
         channel_name = channel["name"]
         instructions = channel.get("instructions", "Summarize all key points.")
 
+        channel_id = channel.get("channel_id", "")
+        if not channel_id:
+            print(f"  Skipping {channel_name} — no channel_id in config.yaml")
+            continue
+
         print(f"Checking {channel_name} ({handle})...")
-        videos = get_recent_videos(handle, lookback_days, max_per_channel)
+        videos = get_recent_videos(channel_id, handle, lookback_days, max_per_channel)
 
         if not videos:
             print(f"  No recent videos found.")
