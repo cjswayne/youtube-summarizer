@@ -5,14 +5,15 @@ on:
     - cron: '0 15 * * *'  # 7am PST (8am PDT during summer)
   workflow_dispatch:       # Allow manual trigger from GitHub Actions tab
 
+permissions:
+  contents: write          # Required to push processed_videos.json back
+
 jobs:
   summarize:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -21,6 +22,11 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt --quiet
+
+      - name: Write YouTube cookies
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: printf '%s' "$YOUTUBE_COOKIES" > cookies.txt
 
       - name: Run summarizer
         env:
