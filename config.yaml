@@ -1,0 +1,22 @@
+channels:
+  - handle: "@LiquidWeekly"
+    name: "Liquid Weekly"
+    instructions: |
+      Focus on key updates and announcements.
+      Ignore small talk, sponsor reads, and intro/outro.
+
+  - handle: "@jadepuma"
+    name: "Jade Puma"
+    instructions: |
+      Summarize all key points covered.
+      Ignore small talk and intro/outro segments.
+
+email:
+  to: "charles@jadepuma.com"
+  from: "charles@jadepuma.com"
+  subject_prefix: "[VideoDigest]"
+
+settings:
+  lookback_days: 2
+  max_videos_per_channel: 5
+  transcript_language: "en"

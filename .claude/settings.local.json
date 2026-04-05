@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip:*)",
+      "Bash(npm:*)",
+      "Bash(python -c \"import yt_dlp; import youtube_transcript_api; import anthropic; import yaml; import dotenv; print\\('All imports OK'\\)\")",
+      "Bash(python -m py_compile main.py fetcher.py summarizer.py emailer.py state.py)",
+      "*"
+    ]
+  }
+}
