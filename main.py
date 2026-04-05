@@ -35,19 +35,24 @@ def main():
 
     processed_ids = load_processed_ids()
     all_summaries = []
+    errors = []
 
     for channel in config["channels"]:
         handle = channel["handle"]
         channel_name = channel["name"]
         instructions = channel.get("instructions", "Summarize all key points.")
-
         channel_id = channel.get("channel_id", "")
+
         if not channel_id:
-            print(f"  Skipping {channel_name} — no channel_id in config.yaml")
+            errors.append(f"{channel_name}: missing channel_id in config.yaml")
             continue
 
         print(f"Checking {channel_name} ({handle})...")
-        videos = get_recent_videos(channel_id, handle, lookback_days, max_per_channel)
+        try:
+            videos = get_recent_videos(channel_id, handle, lookback_days, max_per_channel)
+        except Exception as e:
+            errors.append(f"{channel_name}: failed to fetch videos — {e}")
+            continue
 
         if not videos:
             print(f"  No recent videos found.")
@@ -82,22 +87,33 @@ def main():
                     reason = summary.get("skip_reason", "filtered by channel instructions")
                     print(f"    Skipped: {reason}")
 
-                # Mark processed regardless of skip — avoid rechecking tomorrow
                 processed_ids = mark_processed(video["id"], processed_ids)
 
             except RuntimeError as e:
+                # No transcript available — don't mark processed, retry next run
                 print(f"    No transcript available ({e}), skipping.")
-                processed_ids = mark_processed(video["id"], processed_ids)
             except Exception as e:
-                print(f"    Error: {e} — will retry tomorrow.")
-                # Do NOT mark processed so it retries on the next run
+                # Transient error — don't mark processed, report as error
+                msg = f"{channel_name} / {video['title']}: {e}"
+                print(f"    ERROR: {msg}")
+                errors.append(msg)
 
     if all_summaries:
         print(f"\nSending digest with {len(all_summaries)} summary/summaries...")
-        send_digest(all_summaries, config, smtp_password=gmail_password)
-        print("Email sent.")
+        try:
+            send_digest(all_summaries, config, smtp_password=gmail_password)
+            print("Email sent.")
+        except Exception as e:
+            errors.append(f"Failed to send email: {e}")
+
     else:
         print("\nNo new summaries to send — skipping email.")
+
+    if errors:
+        print(f"\n{len(errors)} error(s) occurred:", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
