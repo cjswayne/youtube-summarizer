@@ -1,8 +1,18 @@
 import subprocess
 import json
 import math
+import os
+import tempfile
 from datetime import datetime, timezone, timedelta
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+
+COOKIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+
+
+def _cookies_args() -> list[str]:
+    """Return yt-dlp cookie args if cookies.txt exists in the project root."""
+    if os.path.exists(COOKIES_FILE):
+        return ["--cookies", COOKIES_FILE]
+    return []
 
 
 def get_recent_videos(handle: str, lookback_days: int, max_count: int) -> list[dict]:
@@ -17,6 +27,7 @@ def get_recent_videos(handle: str, lookback_days: int, max_count: int) -> list[d
         "--dump-json",
         "--no-warnings",
         "--quiet",
+        *_cookies_args(),
         url,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -67,20 +78,61 @@ def get_recent_videos(handle: str, lookback_days: int, max_count: int) -> list[d
     return videos
 
 
-def get_transcript(video_id: str, language: str = "en") -> list:
+def get_transcript(video_id: str, language: str = "en") -> list[dict]:
     """
-    Fetch transcript segments for a video.
-    Raises TranscriptsDisabled or NoTranscriptFound if unavailable.
+    Fetch transcript for a video using yt-dlp (auto-generated or manual captions).
+    Returns list of dicts with keys: text, start, duration.
+    Raises RuntimeError if no transcript is available.
     """
-    api = YouTubeTranscriptApi()
-    return api.fetch(video_id, languages=[language])
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_template = os.path.join(tmpdir, "%(id)s")
+        cmd = [
+            "yt-dlp",
+            "--skip-download",
+            "--write-auto-sub",
+            "--write-sub",
+            "--sub-lang", language,
+            "--sub-format", "json3",
+            "--no-warnings",
+            "--quiet",
+            *_cookies_args(),
+            "--output", output_template,
+            f"https://www.youtube.com/watch?v={video_id}",
+        ]
+        subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+        sub_file = None
+        for fname in os.listdir(tmpdir):
+            if fname.endswith(".json3"):
+                sub_file = os.path.join(tmpdir, fname)
+                break
+
+        if not sub_file:
+            raise RuntimeError(f"No transcript available for {video_id}")
+
+        with open(sub_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+    segments = []
+    for event in data.get("events", []):
+        start_ms = event.get("tStartMs", 0)
+        duration_ms = event.get("dDurationMs", 0)
+        segs = event.get("segs", [])
+        text = "".join(s.get("utf8", "") for s in segs).strip()
+        if text:
+            segments.append({
+                "text": text,
+                "start": start_ms / 1000.0,
+                "duration": duration_ms / 1000.0,
+            })
+
+    return segments
 
 
-def format_transcript_with_timestamps(segments) -> str:
+def format_transcript_with_timestamps(segments: list[dict]) -> str:
     """
     Group transcript segments into ~60-second blocks, each prefixed with [MM:SS].
     Returns a single string for Claude consumption.
-    Accepts both dict segments and FetchedTranscriptSnippet objects.
     """
     if not segments:
         return ""
@@ -91,8 +143,8 @@ def format_transcript_with_timestamps(segments) -> str:
     block_duration = 60  # seconds per block
 
     for seg in segments:
-        start = seg.start if hasattr(seg, "start") else seg["start"]
-        text = seg.text if hasattr(seg, "text") else seg["text"]
+        start = seg["start"]
+        text = seg["text"]
 
         block_index = math.floor(start / block_duration)
         block_start = block_index * block_duration

@@ -57,5 +57,5 @@ def send_digest(summaries: list[dict], config: dict, smtp_password: str) -> None
     msg.attach(MIMEText(_build_html(summaries), "html"))
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(from_addr, smtp_password)
+        server.login(from_addr, smtp_password.replace("-", ""))
         server.sendmail(from_addr, to_addr, msg.as_string())

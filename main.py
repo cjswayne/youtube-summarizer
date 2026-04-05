@@ -2,7 +2,6 @@ import os
 import sys
 import yaml
 from dotenv import load_dotenv
-from youtube_transcript_api import TranscriptsDisabled, NoTranscriptFound
 
 from fetcher import get_recent_videos, get_transcript, format_transcript_with_timestamps
 from summarizer import summarize_video
@@ -81,8 +80,8 @@ def main():
                 # Mark processed regardless of skip — avoid rechecking tomorrow
                 processed_ids = mark_processed(video["id"], processed_ids)
 
-            except (TranscriptsDisabled, NoTranscriptFound):
-                print(f"    No transcript available, skipping.")
+            except RuntimeError as e:
+                print(f"    No transcript available ({e}), skipping.")
                 processed_ids = mark_processed(video["id"], processed_ids)
             except Exception as e:
                 print(f"    Error: {e} — will retry tomorrow.")
