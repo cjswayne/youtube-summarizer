@@ -25,6 +25,7 @@ def get_recent_videos(handle: str, lookback_days: int, max_count: int) -> list[d
         "yt-dlp",
         "--playlist-end", str(max_count),
         "--dump-json",
+        "--no-check-formats",
         "--no-warnings",
         "--quiet",
         *_cookies_args(),
