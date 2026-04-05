@@ -92,7 +92,7 @@ def get_transcript(video_id: str, language: str = "en") -> list[dict]:
             "--output", output_template,
             f"https://www.youtube.com/watch?v={video_id}",
         ]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
         sub_file = None
         for fname in os.listdir(tmpdir):
@@ -101,7 +101,8 @@ def get_transcript(video_id: str, language: str = "en") -> list[dict]:
                 break
 
         if not sub_file:
-            raise RuntimeError(f"No transcript available for {video_id}")
+            err = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(f"No transcript available for {video_id}: {err[:300]}")
 
         with open(sub_file, "r", encoding="utf-8") as f:
             data = json.load(f)
