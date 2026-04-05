@@ -73,54 +73,43 @@ def get_recent_videos(channel_id: str, handle: str, lookback_days: int, max_coun
 
 def get_transcript(video_id: str, language: str = "en") -> list[dict]:
     """
-    Fetch transcript for a video using yt-dlp (auto-generated or manual captions).
+    Fetch transcript using youtube-transcript-api with a cookie-authenticated
+    requests.Session, avoiding yt-dlp bot detection on cloud IPs.
     Returns list of dicts with keys: text, start, duration.
     Raises RuntimeError if no transcript is available.
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        output_template = os.path.join(tmpdir, "%(id)s")
-        cmd = [
-            "yt-dlp",
-            "--skip-download",
-            "--write-auto-sub",
-            "--write-sub",
-            "--sub-lang", language,
-            "--sub-format", "json3",
-            "--no-warnings",
-            "--quiet",
-            *_cookies_args(),
-            "--output", output_template,
-            f"https://www.youtube.com/watch?v={video_id}",
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    import requests
+    from http.cookiejar import MozillaCookieJar
+    from youtube_transcript_api import YouTubeTranscriptApi
+    from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, IpBlocked
 
-        sub_file = None
-        for fname in os.listdir(tmpdir):
-            if fname.endswith(".json3"):
-                sub_file = os.path.join(tmpdir, fname)
-                break
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    })
 
-        if not sub_file:
-            err = (result.stderr or result.stdout or "").strip()
-            raise RuntimeError(f"No transcript available for {video_id}: {err[:300]}")
+    if os.path.exists(COOKIES_FILE):
+        cj = MozillaCookieJar()
+        try:
+            cj.load(COOKIES_FILE, ignore_discard=True, ignore_expires=True)
+            session.cookies = cj
+        except Exception as e:
+            print(f"  Warning: could not load cookies file: {e}")
 
-        with open(sub_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-    segments = []
-    for event in data.get("events", []):
-        start_ms = event.get("tStartMs", 0)
-        duration_ms = event.get("dDurationMs", 0)
-        segs = event.get("segs", [])
-        text = "".join(s.get("utf8", "") for s in segs).strip()
-        if text:
-            segments.append({
-                "text": text,
-                "start": start_ms / 1000.0,
-                "duration": duration_ms / 1000.0,
-            })
-
-    return segments
+    try:
+        api = YouTubeTranscriptApi(http_client=session)
+        fetched = api.fetch(video_id, languages=[language])
+        return [{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched]
+    except (TranscriptsDisabled, NoTranscriptFound) as e:
+        # Permanent — no transcript exists for this video
+        raise RuntimeError(f"No transcript for {video_id}: {e}") from e
+    except IpBlocked as e:
+        # Transient — let it propagate so main.py retries tomorrow
+        raise
 
 
 def format_transcript_with_timestamps(segments: list[dict]) -> str:
