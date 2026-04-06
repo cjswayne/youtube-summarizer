@@ -11,6 +11,9 @@ permissions:
 jobs:
   summarize:
     runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
