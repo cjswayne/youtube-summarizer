@@ -1,23 +1,13 @@
-import subprocess
-import json
 import math
 import os
-import tempfile
 import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
+from youtube_transcript_api.proxies import GenericProxyConfig
 
-COOKIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
 MAX_TRANSCRIPT_RETRIES = 3
 RETRY_BACKOFF_BASE = 2  # seconds; retry delays: 2s, 4s
-
-
-def _cookies_args() -> list[str]:
-    """Return yt-dlp cookie args if cookies.txt exists in the project root."""
-    if os.path.exists(COOKIES_FILE):
-        return ["--cookies", COOKIES_FILE]
-    return []
 
 
 def get_recent_videos(channel_id: str, handle: str, lookback_days: int, max_count: int) -> list[dict]:
@@ -74,68 +64,57 @@ def get_recent_videos(channel_id: str, handle: str, lookback_days: int, max_coun
     return videos
 
 
-def _build_transcript_session():
-    """Build a requests.Session with proxy, cookies, and browser headers."""
-    import requests
-    from http.cookiejar import MozillaCookieJar
+class _RotatingProxyConfig(GenericProxyConfig):
+    """GenericProxyConfig with connection-close for rotating proxies.
+    Retries are handled in get_transcript, not here, to avoid double-retry slowdowns."""
 
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "en-US,en;q=0.9",
-    })
+    @property
+    def prevent_keeping_connections_alive(self) -> bool:
+        return True
 
-    # Proxy support for cloud environments where YouTube blocks IPs
-    proxy_url = os.environ.get("YOUTUBE_PROXY_URL")
-    if proxy_url:
-        session.proxies = {"http": proxy_url, "https": proxy_url}
-        print("  Using proxy for transcript fetch.")
 
-    if os.path.exists(COOKIES_FILE):
-        cj = MozillaCookieJar()
-        try:
-            cj.load(COOKIES_FILE, ignore_discard=True, ignore_expires=True)
-            session.cookies = cj
-        except Exception as e:
-            print(f"  Warning: could not load cookies file: {e}")
-
-    return session
+def _build_proxy_config():
+    """Build a ProxyConfig from YOUTUBE_PROXY_URL env var, or None if unset."""
+    proxy_url = os.environ.get("YOUTUBE_PROXY_URL", "").strip().rstrip("/")
+    if not proxy_url:
+        return None
+    print("  Using proxy for transcript fetch.")
+    return _RotatingProxyConfig(https_url=proxy_url)
 
 
 def get_transcript(video_id: str, language: str = "en") -> list[dict]:
     """
-    Fetch transcript using youtube-transcript-api with optional proxy and
-    cookie-authenticated requests.Session.
-    Retries on IpBlocked with exponential backoff.
+    Fetch transcript using youtube-transcript-api with the library's native
+    proxy_config support. Retries on RequestBlocked / 429 RetryError with
+    exponential backoff.
     Returns list of dicts with keys: text, start, duration.
     Raises RuntimeError if no transcript is available (permanent).
-    Raises IpBlocked if all retries exhausted (transient).
+    Raises the last caught error if all retries exhausted (transient).
     """
+    from requests.exceptions import RetryError, ConnectionError as ReqConnectionError
     from youtube_transcript_api import YouTubeTranscriptApi
-    from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, IpBlocked
+    from youtube_transcript_api._errors import (
+        TranscriptsDisabled, NoTranscriptFound, RequestBlocked,
+    )
 
-    session = _build_transcript_session()
+    proxy_config = _build_proxy_config()
     last_error = None
 
     for attempt in range(1, MAX_TRANSCRIPT_RETRIES + 1):
         try:
-            api = YouTubeTranscriptApi(http_client=session)
+            api = YouTubeTranscriptApi(proxy_config=proxy_config)
             fetched = api.fetch(video_id, languages=[language])
             return [{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched]
         except (TranscriptsDisabled, NoTranscriptFound) as e:
             raise RuntimeError(f"No transcript for {video_id}: {e}") from e
-        except IpBlocked as e:
+        except (RequestBlocked, RetryError, ReqConnectionError) as e:
             last_error = e
             if attempt < MAX_TRANSCRIPT_RETRIES:
                 delay = RETRY_BACKOFF_BASE ** attempt
-                print(f"    IP blocked (attempt {attempt}/{MAX_TRANSCRIPT_RETRIES}), retrying in {delay}s...")
+                print(f"    Blocked/429 (attempt {attempt}/{MAX_TRANSCRIPT_RETRIES}), retrying in {delay}s...")
                 time.sleep(delay)
             else:
-                print(f"    IP blocked after {MAX_TRANSCRIPT_RETRIES} attempts.")
+                print(f"    Blocked after {MAX_TRANSCRIPT_RETRIES} attempts: {type(e).__name__}")
 
     raise last_error
 

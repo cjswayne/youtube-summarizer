@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   summarize:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - uses: actions/checkout@v4
@@ -23,16 +23,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt --quiet
 
-      - name: Write YouTube cookies
-        env:
-          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
-        run: printf '%s' "$YOUTUBE_COOKIES" > cookies.txt
-
       - name: Run summarizer
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          YOUTUBE_PROXY_URL: ${{ secrets.YOUTUBE_PROXY_URL }}
         run: python main.py
 
       - name: Commit updated state
