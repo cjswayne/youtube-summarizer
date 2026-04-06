@@ -3,11 +3,14 @@ import json
 import math
 import os
 import tempfile
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
 COOKIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+MAX_TRANSCRIPT_RETRIES = 3
+RETRY_BACKOFF_BASE = 2  # seconds; retry delays: 2s, 4s
 
 
 def _cookies_args() -> list[str]:
@@ -71,26 +74,26 @@ def get_recent_videos(channel_id: str, handle: str, lookback_days: int, max_coun
     return videos
 
 
-def get_transcript(video_id: str, language: str = "en") -> list[dict]:
-    """
-    Fetch transcript using youtube-transcript-api with a cookie-authenticated
-    requests.Session, avoiding yt-dlp bot detection on cloud IPs.
-    Returns list of dicts with keys: text, start, duration.
-    Raises RuntimeError if no transcript is available.
-    """
+def _build_transcript_session():
+    """Build a requests.Session with proxy, cookies, and browser headers."""
     import requests
     from http.cookiejar import MozillaCookieJar
-    from youtube_transcript_api import YouTubeTranscriptApi
-    from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, IpBlocked
 
     session = requests.Session()
     session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
     })
+
+    # Proxy support for cloud environments where YouTube blocks IPs
+    proxy_url = os.environ.get("YOUTUBE_PROXY_URL")
+    if proxy_url:
+        session.proxies = {"http": proxy_url, "https": proxy_url}
+        print("  Using proxy for transcript fetch.")
 
     if os.path.exists(COOKIES_FILE):
         cj = MozillaCookieJar()
@@ -100,16 +103,41 @@ def get_transcript(video_id: str, language: str = "en") -> list[dict]:
         except Exception as e:
             print(f"  Warning: could not load cookies file: {e}")
 
-    try:
-        api = YouTubeTranscriptApi(http_client=session)
-        fetched = api.fetch(video_id, languages=[language])
-        return [{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched]
-    except (TranscriptsDisabled, NoTranscriptFound) as e:
-        # Permanent — no transcript exists for this video
-        raise RuntimeError(f"No transcript for {video_id}: {e}") from e
-    except IpBlocked as e:
-        # Transient — let it propagate so main.py retries tomorrow
-        raise
+    return session
+
+
+def get_transcript(video_id: str, language: str = "en") -> list[dict]:
+    """
+    Fetch transcript using youtube-transcript-api with optional proxy and
+    cookie-authenticated requests.Session.
+    Retries on IpBlocked with exponential backoff.
+    Returns list of dicts with keys: text, start, duration.
+    Raises RuntimeError if no transcript is available (permanent).
+    Raises IpBlocked if all retries exhausted (transient).
+    """
+    from youtube_transcript_api import YouTubeTranscriptApi
+    from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, IpBlocked
+
+    session = _build_transcript_session()
+    last_error = None
+
+    for attempt in range(1, MAX_TRANSCRIPT_RETRIES + 1):
+        try:
+            api = YouTubeTranscriptApi(http_client=session)
+            fetched = api.fetch(video_id, languages=[language])
+            return [{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched]
+        except (TranscriptsDisabled, NoTranscriptFound) as e:
+            raise RuntimeError(f"No transcript for {video_id}: {e}") from e
+        except IpBlocked as e:
+            last_error = e
+            if attempt < MAX_TRANSCRIPT_RETRIES:
+                delay = RETRY_BACKOFF_BASE ** attempt
+                print(f"    IP blocked (attempt {attempt}/{MAX_TRANSCRIPT_RETRIES}), retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                print(f"    IP blocked after {MAX_TRANSCRIPT_RETRIES} attempts.")
+
+    raise last_error
 
 
 def format_transcript_with_timestamps(segments: list[dict]) -> str:

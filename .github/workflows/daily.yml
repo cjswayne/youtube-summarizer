@@ -32,6 +32,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          YOUTUBE_PROXY_URL: ${{ secrets.YOUTUBE_PROXY_URL }}
         run: python main.py
 
       - name: Commit updated state
