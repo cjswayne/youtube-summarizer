@@ -11,14 +11,12 @@ permissions:
 jobs:
   summarize:
     runs-on: self-hosted
+    defaults:
+      run:
+        shell: powershell
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
 
       - name: Install dependencies
         run: pip install -r requirements.txt --quiet
@@ -30,10 +28,12 @@ jobs:
         run: python main.py
 
       - name: Commit updated state
-        shell: bash
         run: |
           git config user.email "github-actions@github.com"
           git config user.name "GitHub Actions"
           git add processed_videos.json
-          git diff --staged --quiet || git commit -m "chore: update processed videos state [skip ci]"
-          git push
+          $diff = git diff --staged --quiet 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore: update processed videos state [skip ci]"
+            git push
+          }
