@@ -34,10 +34,11 @@ jobs:
 
       - name: Commit updated state
         run: |
+          git config --global --add safe.directory $env:GITHUB_WORKSPACE
           git config user.email "github-actions@github.com"
           git config user.name "GitHub Actions"
           git add processed_videos.json
-          $diff = git diff --staged --quiet 2>&1
+          $null = git diff --staged --quiet 2>&1
           if ($LASTEXITCODE -ne 0) {
             git commit -m "chore: update processed videos state [skip ci]"
             git push
